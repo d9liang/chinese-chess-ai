@@ -6,6 +6,7 @@ const depthInput = document.getElementById('depth');
 const depthVal = document.getElementById('depthVal');
 const turnEl = document.getElementById('turn');
 const msgEl = document.getElementById('msg');
+const aiLevelEl = document.getElementById('aiLevel');
 
 const ROWS = 10;
 const COLS = 9;
@@ -45,6 +46,7 @@ const LABELS = {
   [PIECE.P]: { r: '兵', b: '卒' },
 };
 
+const DEPTH_LABEL = { 2: '入门', 3: '普通', 4: '进阶' };
 let board = [];
 let selected = null;
 let legalMoves = [];
@@ -683,8 +685,20 @@ resetBtn.addEventListener('click', initBoard);
 canvas.addEventListener('click', handleClick);
 
 depthInput.addEventListener('input', () => {
-  depthVal.textContent = depthInput.value;
+  const depth = Number(depthInput.value);
+  depthVal.textContent = depth;
+  aiLevelEl.textContent = DEPTH_LABEL[depth] || ('深度 ' + depth);
 });
 
-depthVal.textContent = depthInput.value;
+const initialDepth = Number(depthInput.value);
+depthVal.textContent = initialDepth;
+aiLevelEl.textContent = DEPTH_LABEL[initialDepth] || ('深度 ' + initialDepth);
 initBoard();
+
+
+
+
+
+
+
+

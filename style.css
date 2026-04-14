@@ -92,6 +92,12 @@ main {
   margin-bottom: 8px;
 }
 
+.status .ai {
+  font-size: 14px;
+  color: #5b4c40;
+  margin-bottom: 8px;
+}
+
 .status .msg {
   font-size: 16px;
   margin-bottom: 10px;
@@ -119,3 +125,4 @@ main {
     align-items: flex-start;
   }
 }
+
