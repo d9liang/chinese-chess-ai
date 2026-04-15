@@ -104,6 +104,11 @@ main {
   color: var(--accent);
 }
 
+.status .msg.check {
+  color: var(--red);
+  font-weight: 700;
+}
+
 .status .hint {
   font-size: 14px;
   color: #5b4c40;
@@ -125,4 +130,5 @@ main {
     align-items: flex-start;
   }
 }
+
 

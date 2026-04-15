@@ -47,13 +47,25 @@ const LABELS = {
 };
 
 const DEPTH_LABEL = { 2: '入门', 3: '普通', 4: '进阶' };
+const AI_THINK_BUDGET_MS = 10000;
+
 let board = [];
 let selected = null;
 let legalMoves = [];
 let turn = RED;
 let gameOver = false;
+let aiBusy = false;
+let aiTimer = null;
+let animation = null;
+let checkInfo = null;
+let renderLoopActive = false;
 
 function initBoard() {
+  if (aiTimer) {
+    clearTimeout(aiTimer);
+    aiTimer = null;
+  }
+
   board = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
 
   const backRow = [PIECE.R, PIECE.N, PIECE.B, PIECE.A, PIECE.K, PIECE.A, PIECE.B, PIECE.N, PIECE.R];
@@ -77,20 +89,31 @@ function initBoard() {
   legalMoves = [];
   turn = RED;
   gameOver = false;
-  updateStatus('请走子');
-  draw();
+  aiBusy = false;
+  animation = null;
+  checkInfo = null;
+  setMessage('请走子');
+  draw(performance.now());
 }
 
-function updateStatus(msg) {
+function setMessage(msg, options = {}) {
   msgEl.textContent = msg;
+  msgEl.classList.toggle('check', Boolean(options.check));
   turnEl.textContent = turn === RED ? '红方' : '黑方';
 }
 
-function draw() {
+function updateDepthLabel() {
+  const depth = Number(depthInput.value);
+  depthVal.textContent = depth;
+  aiLevelEl.textContent = DEPTH_LABEL[depth] || `深度 ${depth}`;
+}
+
+function draw(now = performance.now()) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawBoard();
-  drawPieces();
-  drawHighlights();
+  drawPieces(now);
+  drawHighlights(now);
+  drawCheckMarks(now);
 }
 
 function drawBoard() {
@@ -144,54 +167,147 @@ function drawPalace(x1, y1, x2, y2) {
   ctx.stroke();
 }
 
-function drawPieces() {
+function drawPiece(piece, x, y, options = {}) {
+  const color = piece > 0 ? RED : BLACK;
+  const type = Math.abs(piece);
+  const scale = options.scale || 1;
+  const alpha = options.alpha == null ? 1 : options.alpha;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x, y);
+  ctx.scale(scale, scale);
+
+  ctx.beginPath();
+  ctx.fillStyle = '#fdf7ec';
+  ctx.strokeStyle = color === RED ? '#c0392b' : '#2c2c2c';
+  ctx.lineWidth = 2;
+  ctx.arc(0, 0, 24, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = color === RED ? '#c0392b' : '#2c2c2c';
+  ctx.font = '24px "Noto Serif SC", serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const label = color === RED ? LABELS[type].r : LABELS[type].b;
+  ctx.fillText(label, 0, 1);
+  ctx.restore();
+}
+
+function drawPieces(now) {
   for (let r = 0; r < ROWS; r += 1) {
     for (let c = 0; c < COLS; c += 1) {
       const piece = board[r][c];
       if (piece === 0) continue;
-      const color = piece > 0 ? RED : BLACK;
-      const type = Math.abs(piece);
+
+      if (animation && animation.phase === 'move') {
+        if (r === animation.move.from.r && c === animation.move.from.c) continue;
+        if (r === animation.move.to.r && c === animation.move.to.c) continue;
+      }
+
       const x = MARGIN + c * CELL;
       const y = MARGIN + r * CELL;
-
-      ctx.beginPath();
-      ctx.fillStyle = '#fdf7ec';
-      ctx.strokeStyle = color === RED ? '#c0392b' : '#2c2c2c';
-      ctx.lineWidth = 2;
-      ctx.arc(x, y, 24, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-
-      ctx.fillStyle = color === RED ? '#c0392b' : '#2c2c2c';
-      ctx.font = '24px "Noto Serif SC", serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      const label = color === RED ? LABELS[type].r : LABELS[type].b;
-      ctx.fillText(label, x, y + 1);
+      drawPiece(piece, x, y);
     }
+  }
+
+  if (!animation || animation.phase !== 'move') return;
+
+  const progress = easeInOut(clamp((now - animation.phaseStart) / animation.moveDuration, 0, 1));
+  const fromX = MARGIN + animation.move.from.c * CELL;
+  const fromY = MARGIN + animation.move.from.r * CELL;
+  const toX = MARGIN + animation.move.to.c * CELL;
+  const toY = MARGIN + animation.move.to.r * CELL;
+  const x = lerp(fromX, toX, progress);
+  const y = lerp(fromY, toY, progress);
+  const scale = 1 + 0.06 * Math.sin(progress * Math.PI);
+  drawPiece(animation.piece, x, y, { scale });
+  drawMoveTrail(animation.move.from, animation.move.to, progress);
+}
+
+function drawMoveTrail(from, to, progress) {
+  const fromX = MARGIN + from.c * CELL;
+  const fromY = MARGIN + from.r * CELL;
+  const toX = MARGIN + to.c * CELL;
+  const toY = MARGIN + to.r * CELL;
+  ctx.save();
+  ctx.strokeStyle = `rgba(192, 57, 43, ${0.12 + 0.28 * progress})`;
+  ctx.lineWidth = 6;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(fromX, fromY);
+  ctx.lineTo(lerp(fromX, toX, progress), lerp(fromY, toY, progress));
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawPulse(coord, opacity, color) {
+  const x = MARGIN + coord.c * CELL;
+  const y = MARGIN + coord.r * CELL;
+  ctx.save();
+  ctx.strokeStyle = rgba(color, 0.25 + 0.45 * opacity);
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.arc(x, y, 28 + 5 * opacity, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.fillStyle = rgba(color, 0.08 + 0.18 * opacity);
+  ctx.beginPath();
+  ctx.arc(x, y, 22 + 3 * opacity, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawHighlights(now) {
+  if (selected) {
+    const { r, c } = selected;
+    const x = MARGIN + c * CELL;
+    const y = MARGIN + r * CELL;
+    ctx.save();
+    ctx.strokeStyle = '#3b7a57';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(x, y, 26, 0, Math.PI * 2);
+    ctx.stroke();
+
+    for (const move of legalMoves) {
+      const mx = MARGIN + move.to.c * CELL;
+      const my = MARGIN + move.to.r * CELL;
+      ctx.fillStyle = 'rgba(59, 122, 87, 0.25)';
+      ctx.beginPath();
+      ctx.arc(mx, my, 10, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  if (!animation) return;
+
+  if (animation.phase === 'pre') {
+    const opacity = blinkOpacity(now, animation.phaseStart, animation.preDuration, 2);
+    drawPulse(animation.move.from, opacity, '#c0392b');
+  } else if (animation.phase === 'post') {
+    const opacity = blinkOpacity(now, animation.phaseStart, animation.postDuration, 3);
+    drawPulse(animation.move.to, opacity, '#3b7a57');
   }
 }
 
-function drawHighlights() {
-  if (!selected) return;
-  const { r, c } = selected;
-  const x = MARGIN + c * CELL;
-  const y = MARGIN + r * CELL;
-  ctx.save();
-  ctx.strokeStyle = '#3b7a57';
-  ctx.lineWidth = 3;
-  ctx.beginPath();
-  ctx.arc(x, y, 26, 0, Math.PI * 2);
-  ctx.stroke();
+function drawCheckMarks(now) {
+  if (!checkInfo) return;
+  const opacity = 0.45 + 0.25 * Math.sin(now / 140);
+  drawThreatRing(checkInfo.attacker, rgba('#d32f2f', opacity), 26 + 2 * Math.sin(now / 120), 4);
+  drawThreatRing(checkInfo.king, rgba('#d32f2f', opacity * 0.9), 26 + 2 * Math.cos(now / 120), 4);
+}
 
-  for (const move of legalMoves) {
-    const mx = MARGIN + move.to.c * CELL;
-    const my = MARGIN + move.to.r * CELL;
-    ctx.fillStyle = 'rgba(59, 122, 87, 0.25)';
-    ctx.beginPath();
-    ctx.arc(mx, my, 10, 0, Math.PI * 2);
-    ctx.fill();
-  }
+function drawThreatRing(coord, stroke, radius, width) {
+  const x = MARGIN + coord.c * CELL;
+  const y = MARGIN + coord.r * CELL;
+  ctx.save();
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.stroke();
   ctx.restore();
 }
 
@@ -293,13 +409,11 @@ function genCannon(r, c, color, state, moves) {
         } else {
           jumped = true;
         }
-      } else {
-        if (state[nr][nc] !== 0) {
-          if (Math.sign(state[nr][nc]) !== color) {
-            moves.push({ from: { r, c }, to: { r: nr, c: nc }, capture: state[nr][nc] });
-          }
-          break;
+      } else if (state[nr][nc] !== 0) {
+        if (Math.sign(state[nr][nc]) !== color) {
+          moves.push({ from: { r, c }, to: { r: nr, c: nc }, capture: state[nr][nc] });
         }
+        break;
       }
       nr += dr;
       nc += dc;
@@ -429,21 +543,30 @@ function applyMove(state, move) {
 }
 
 function isInCheck(color, state) {
-  const king = findKing(color, state);
-  if (!king) return true;
-  return isSquareAttacked(king.r, king.c, -color, state);
+  return Boolean(getCheckInfo(color, state));
 }
 
-function isSquareAttacked(r, c, attackerColor, state) {
-  for (let rr = 0; rr < ROWS; rr += 1) {
-    for (let cc = 0; cc < COLS; cc += 1) {
-      const piece = state[rr][cc];
+function getCheckInfo(defenderColor, state = board) {
+  const king = findKing(defenderColor, state);
+  if (!king) return null;
+
+  const attackerColor = -defenderColor;
+  for (let r = 0; r < ROWS; r += 1) {
+    for (let c = 0; c < COLS; c += 1) {
+      const piece = state[r][c];
       if (piece === 0 || Math.sign(piece) !== attackerColor) continue;
       const type = Math.abs(piece);
-      if (canAttack(type, attackerColor, rr, cc, r, c, state)) return true;
+      if (canAttack(type, attackerColor, r, c, king.r, king.c, state)) {
+        return {
+          attacker: { r, c },
+          king,
+          attackerColor,
+          defenderColor,
+        };
+      }
     }
   }
-  return false;
+  return null;
 }
 
 function canAttack(type, color, r, c, tr, tc, state) {
@@ -588,25 +711,96 @@ function negamax(state, depth, alpha, beta, color) {
   return best;
 }
 
-function chooseAIMove() {
-  const depth = Number(depthInput.value);
+function analyzeAIMoves(depth) {
   const moves = generateMoves(BLACK, board);
-  let bestScore = -Infinity;
-  let bestMove = null;
+  if (moves.length === 0) return null;
+
+  const scored = [];
   for (const move of moves) {
     const next = cloneBoard(board);
     applyMove(next, move);
     const score = -negamax(next, depth - 1, -Infinity, Infinity, RED);
-    if (score > bestScore) {
-      bestScore = score;
-      bestMove = move;
-    }
+    const givesCheck = Boolean(getCheckInfo(RED, next));
+    scored.push({ move, score, givesCheck });
   }
-  return bestMove;
+
+  scored.sort((a, b) => b.score - a.score);
+  const best = scored[0];
+  const runnerUp = scored[1] || null;
+  const forced = moves.length === 1 || Boolean(getCheckInfo(BLACK, board));
+  return {
+    moves: scored,
+    move: best.move,
+    bestScore: best.score,
+    runnerUpScore: runnerUp ? runnerUp.score : best.score,
+    scoreGap: runnerUp ? Math.abs(best.score - runnerUp.score) : 0,
+    legalCount: moves.length,
+    forced,
+    givesCheck: best.givesCheck,
+  };
+}
+
+function estimateThinkTime(analysis, depth) {
+  if (analysis.forced) {
+    return randomBetween(450, 900);
+  }
+
+  let ms = 1100 + depth * 350;
+  ms += Math.min(analysis.legalCount, 30) * 85;
+  if (analysis.move.capture) ms += 500;
+  if (analysis.givesCheck) ms += 700;
+  if (analysis.scoreGap < 60) ms += 2500;
+  else if (analysis.scoreGap < 180) ms += 1800;
+  else if (analysis.scoreGap < 360) ms += 1100;
+  else if (analysis.scoreGap < 700) ms += 500;
+  ms += randomBetween(0, 1400);
+  return clamp(ms, 1000, AI_THINK_BUDGET_MS);
+}
+
+function formatSeconds(ms) {
+  return `${(ms / 1000).toFixed(ms >= 1000 ? 1 : 2)}秒`;
+}
+
+function randomBetween(min, max) {
+  return Math.round(min + Math.random() * (max - min));
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function easeInOut(t) {
+  return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+}
+
+function blinkOpacity(now, start, duration, blinks) {
+  const elapsed = now - start;
+  if (elapsed < 0 || elapsed > duration) return 0;
+  const cycle = (elapsed / duration) * blinks * 2 * Math.PI;
+  const wave = Math.sin(cycle);
+  return wave > 0 ? Math.abs(wave) : 0;
+}
+
+function rgba(color, alpha) {
+  if (color.startsWith('#')) {
+    const hex = color.slice(1);
+    const value = hex.length === 3
+      ? hex.split('').map((ch) => ch + ch).join('')
+      : hex;
+    const r = parseInt(value.slice(0, 2), 16);
+    const g = parseInt(value.slice(2, 4), 16);
+    const b = parseInt(value.slice(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  }
+  return color;
 }
 
 function handleClick(evt) {
-  if (gameOver || turn !== RED) return;
+  if (gameOver || turn !== RED || aiBusy || animation) return;
   const rect = canvas.getBoundingClientRect();
   const x = evt.clientX - rect.left;
   const y = evt.clientY - rect.top;
@@ -621,11 +815,18 @@ function handleClick(evt) {
       applyMove(board, move);
       selected = null;
       legalMoves = [];
-      if (checkGameOver()) return;
+      if (checkForGameOverAfterMove(RED)) return;
       turn = BLACK;
-      updateStatus('AI思考中...');
-      draw();
-      setTimeout(aiMove, 200);
+
+      checkInfo = getCheckInfo(BLACK, board);
+      if (checkInfo) {
+        setMessage('黑方被将军，AI正在思考...', { check: true });
+      } else {
+        setMessage('AI正在思考...');
+      }
+
+      draw(performance.now());
+      startAIMove();
       return;
     }
   }
@@ -637,45 +838,129 @@ function handleClick(evt) {
     selected = null;
     legalMoves = [];
   }
-  draw();
+  draw(performance.now());
 }
 
-function aiMove() {
+function startAIMove() {
   if (gameOver || turn !== BLACK) return;
-  const move = chooseAIMove();
-  if (!move) {
+
+  const depth = Number(depthInput.value);
+  const analysis = analyzeAIMoves(depth);
+  if (!analysis) {
     gameOver = true;
-    updateStatus('黑方无棋可走，红方胜');
+    aiBusy = false;
+    setMessage('黑方无棋可走，红方胜', { check: true });
+    draw(performance.now());
     return;
   }
-  applyMove(board, move);
-  if (checkGameOver()) return;
-  turn = RED;
-  updateStatus('请走子');
-  draw();
+
+  aiBusy = true;
+  const thinkMs = estimateThinkTime(analysis, depth);
+  setMessage(`AI思考中... 约 ${formatSeconds(thinkMs)}`);
+  draw(performance.now());
+
+  aiTimer = setTimeout(() => {
+    aiTimer = null;
+    if (gameOver || turn !== BLACK) {
+      aiBusy = false;
+      return;
+    }
+    beginAIMoveAnimation(analysis);
+  }, thinkMs);
 }
 
-function checkGameOver() {
+function beginAIMoveAnimation(analysis) {
+  const move = analysis.move;
+  animation = {
+    piece: board[move.from.r][move.from.c],
+    move,
+    phase: 'pre',
+    phaseStart: performance.now(),
+    preDuration: 560,
+    moveDuration: clamp(700 + analysis.legalCount * 8, 700, 980),
+    postDuration: 900,
+  };
+  if (!renderLoopActive) {
+    renderLoopActive = true;
+    requestAnimationFrame(renderAnimationFrame);
+  }
+}
+
+function renderAnimationFrame(now) {
+  if (!animation) {
+    renderLoopActive = false;
+    draw(now);
+    return;
+  }
+
+  updateAnimation(now);
+  draw(now);
+  requestAnimationFrame(renderAnimationFrame);
+}
+
+function updateAnimation(now) {
+  const elapsed = now - animation.phaseStart;
+
+  if (animation.phase === 'pre' && elapsed >= animation.preDuration) {
+    animation.phase = 'move';
+    animation.phaseStart = now;
+    setMessage('黑方走子中...');
+    return;
+  }
+
+  if (animation.phase === 'move') {
+    if (elapsed >= animation.moveDuration) {
+      applyMove(board, animation.move);
+      turn = RED;
+      checkInfo = getCheckInfo(RED, board);
+      if (checkInfo) {
+        setMessage('红方被将军，请应对', { check: true });
+      } else {
+        setMessage('请走子');
+      }
+      animation.phase = 'post';
+      animation.phaseStart = now;
+      if (checkForGameOverAfterMove(BLACK)) {
+        animation = null;
+        aiBusy = false;
+      }
+      return;
+    }
+    return;
+  }
+
+  if (animation.phase === 'post' && elapsed >= animation.postDuration) {
+    animation = null;
+    aiBusy = false;
+    if (!gameOver) {
+      if (checkInfo) {
+        setMessage('红方被将军，请应对', { check: true });
+      } else {
+        setMessage('请走子');
+      }
+    }
+  }
+}
+
+function checkForGameOverAfterMove(moverColor) {
   const redKing = findKing(RED, board);
   const blackKing = findKing(BLACK, board);
   if (!redKing) {
     gameOver = true;
-    updateStatus('黑方胜');
-    draw();
+    setMessage(moverColor === RED ? '红方胜' : '黑方胜', { check: true });
     return true;
   }
   if (!blackKing) {
     gameOver = true;
-    updateStatus('红方胜');
-    draw();
+    setMessage(moverColor === RED ? '红方胜' : '黑方胜', { check: true });
     return true;
   }
-  const moves = generateMoves(turn === RED ? BLACK : RED, board);
+
+  const nextColor = moverColor === RED ? BLACK : RED;
+  const moves = generateMoves(nextColor, board);
   if (moves.length === 0) {
     gameOver = true;
-    const winner = turn === RED ? '红方' : '黑方';
-    updateStatus(`${winner}胜`);
-    draw();
+    setMessage(moverColor === RED ? '红方胜' : '黑方胜', { check: true });
     return true;
   }
   return false;
@@ -683,22 +968,7 @@ function checkGameOver() {
 
 resetBtn.addEventListener('click', initBoard);
 canvas.addEventListener('click', handleClick);
+depthInput.addEventListener('input', updateDepthLabel);
 
-depthInput.addEventListener('input', () => {
-  const depth = Number(depthInput.value);
-  depthVal.textContent = depth;
-  aiLevelEl.textContent = DEPTH_LABEL[depth] || ('深度 ' + depth);
-});
-
-const initialDepth = Number(depthInput.value);
-depthVal.textContent = initialDepth;
-aiLevelEl.textContent = DEPTH_LABEL[initialDepth] || ('深度 ' + initialDepth);
+updateDepthLabel();
 initBoard();
-
-
-
-
-
-
-
-
