@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>中国象棋 · 人机对战</title>
-  <link rel="stylesheet" href="style.css?v=20260415" />
+  <link rel="stylesheet" href="style.css?v=20260424" />
 </head>
 <body>
   <div class="app">
@@ -21,7 +21,9 @@
     </header>
 
     <main>
-      <canvas id="board" width="540" height="600" aria-label="象棋棋盘"></canvas>
+      <div class="boardWrap">
+        <canvas id="board" width="540" height="600" aria-label="象棋棋盘"></canvas>
+      </div>
       <aside class="status">
         <div class="turn">当前回合：<span id="turn">红方</span></div>
         <div class="ai">AI难度：<span id="aiLevel">普通</span></div>
@@ -35,7 +37,9 @@
     </main>
   </div>
 
-  <script src="app.js?v=20260415"></script>
+  <script src="engine.js?v=20260424"></script>
+  <script src="ai.js?v=20260424"></script>
+  <script src="app.js?v=20260424"></script>
 </body>
 </html>
 
